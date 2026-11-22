@@ -1,7 +1,8 @@
-# Capa de datos pendiente
+# Capa de datos
 
-La base NO incluye SQLite implementado. Investiga cómo crear una tabla de tareas
-con Drift y cómo abrir una base persistente en Android, iOS, Windows, Linux,
-macOS y web. Puedes decidir los nombres de los archivos y las clases.
+La apertura persistente, la tabla `tasks`, el alta y las consultas estan en
+`app_database.dart`. Drift genera `app_database.g.dart`, incluido en Git.
 
-No coloques consultas SQL dentro de build(). Documenta tus decisiones en el reporte.
+Para regenerar el codigo, ejecuta `dart run build_runner build`.
+No coloques consultas SQL dentro de `build()`. Las decisiones y las verificaciones
+estan documentadas en `README.md`.

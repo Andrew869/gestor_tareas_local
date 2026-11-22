@@ -4,22 +4,20 @@ Proyecto Flutter para administrar tareas mediante SQLite local, sin servidor de
 datos, MySQL ni API HTTP. El objetivo es compartir el mismo proyecto entre Android,
 iOS, Windows, Linux, macOS y web, conservando las tareas entre ejecuciones.
 
-## Estado de la primera etapa
+## Estado actual: segunda etapa
 
-Esta etapa verifica el proyecto inicial y define el almacenamiento. La pantalla
-actual incluye controles para agregar, editar, completar y eliminar, pero sus
-acciones solo muestran mensajes de operaciones pendientes. La lista esta en
-memoria: todavia no hay persistencia ni dependencias SQLite instaladas.
-
-El esquema y la arquitectura siguientes son decisiones de diseno, no funciones
-ya implementadas.
+La aplicacion abre una base SQLite persistente, valida y guarda tareas nuevas,
+y muestra su titulo, ID y estado mediante una consulta reactiva. La lista se
+recupera de SQLite al volver a abrir la aplicacion; no depende de una lista local.
+Los controles de edicion, estado y eliminacion estan deshabilitados hasta la
+tercera etapa. La primera etapa verifico el proyecto inicial y definio el diseno.
 
 ## Tecnologia elegida
 
-Se utilizara **Drift sobre SQLite**, con **drift_flutter** para abrir la base en
+Se utiliza **Drift sobre SQLite**, con **drift_flutter** para abrir la base en
 cada plataforma. Drift no es un servidor: las consultas se ejecutan localmente.
 
-| Paquete previsto | Responsabilidad |
+| Paquete | Responsabilidad |
 | --- | --- |
 | `drift` | Tablas, consultas tipadas, migraciones y consultas reactivas. |
 | `drift_flutter` | Apertura de la conexion apropiada para Flutter nativo y web. |
@@ -31,25 +29,34 @@ observar cambios mediante streams y probar la base independientemente de la
 interfaz. Ademas, cumple la indicacion existente en
 `lib/data/AQUI_IRA_LA_BASE_DE_DATOS.md`.
 
-Las versiones se resolveran al implementar la persistencia y quedaran registradas
-en `pubspec.lock`. El codigo generado no se editara manualmente.
+Las versiones resueltas estan registradas en `pubspec.lock`: Drift `2.35.4`,
+drift_flutter `0.3.1`, drift_dev `2.35.3` y build_runner `2.17.1`.
+`app_database.g.dart` se incluye en Git y no se edita manualmente. Despues de
+cambiar las tablas, se regenera con:
+
+```bash
+dart run build_runner build
+```
 
 ### Almacenamiento por plataforma
 
-| Plataformas | Implementacion prevista |
+| Plataformas | Implementacion configurada |
 | --- | --- |
 | Android, iOS, Windows, Linux y macOS | SQLite nativo en un archivo `tasks.sqlite`, dentro de un directorio persistente de la aplicacion. |
 | Web | SQLite WebAssembly, persistido en OPFS o IndexedDB segun las capacidades del navegador. |
 
-En nativo se configurara un directorio de soporte mediante `path_provider`, no
-una carpeta temporal ni una ruta relativa al ejecutable. Se respetara el sandbox
-de Android, iOS y macOS cuando corresponda.
+En nativo se usa `getApplicationSupportDirectory()` de `path_provider`, creando
+el directorio si hace falta. No es una carpeta temporal ni una ruta relativa al
+ejecutable. Drift ejecuta SQLite en un isolate de segundo plano. Se respeta el
+sandbox de Android, iOS y macOS cuando corresponda.
 
-En web se incluiran `web/sqlite3.wasm` y `web/drift_worker.dart.js`, obtenidos de
-una publicacion compatible con la version de Drift resuelta, sin depender de CDN.
+En web se incluyen `web/sqlite3.wasm` y `web/drift_worker.dart.js`, obtenidos de
+la publicacion Drift `2.35.4`, sin depender de CDN para SQLite. Las fuentes,
+instrucciones de actualizacion y sumas SHA-256 estan en `web/README.md`.
 La base pertenece al origen del sitio (protocolo, dominio y puerto). Borrar los
 datos del sitio o cerrar una sesion privada puede eliminarla. Una conexion solo
-en memoria no se considerara persistencia valida.
+en memoria o una implementacion sin coordinacion segura entre pestanas se
+rechazan con un error de almacenamiento.
 
 La carga inicial web requiere servir los archivos de la aplicacion; esto no
 equivale a utilizar un servidor de datos. La etapa de compatibilidad configurara
@@ -66,7 +73,7 @@ Nombre de base: `tasks`. Version inicial del esquema: `1`.
 | `title` | `TEXT` | Obligatorio y no vacio despues de quitar espacios exteriores. |
 | `is_completed` | `INTEGER` | Obligatorio; `0` pendiente y `1` completada; inicialmente `0`. |
 
-SQL equivalente al esquema previsto:
+SQL equivalente al esquema implementado:
 
 ```sql
 CREATE TABLE tasks (
@@ -77,34 +84,40 @@ CREATE TABLE tasks (
 );
 ```
 
-SQLite asignara el ID al insertar; no se calculara usando el indice de una lista,
+SQLite asigna el ID al insertar; no se calcula usando el indice de una lista,
 el titulo ni la cantidad de registros. `AUTOINCREMENT` evita reutilizar IDs de
-registros eliminados, pero no garantiza una secuencia sin huecos. Se permitiran
+registros eliminados, pero no garantiza una secuencia sin huecos. Se permiten
 titulos repetidos: representan tareas distintas por su ID.
 
-Antes de insertar o editar se aplicara `String.trim()` en Dart y se rechazara un
-resultado vacio. Esta validacion tambien cubrira espacios que el `trim()` de
-SQLite no elimina por defecto. El titulo se guardara normalizado.
+Antes de insertar se aplica `String.trim()` en Dart y se rechaza un resultado
+vacio, tanto en la pantalla como en la capa de datos. Esto tambien cubre espacios
+que el `trim()` de SQLite no elimina por defecto. El titulo se guarda normalizado.
+La edicion incorporara la misma validacion en la tercera etapa.
 
-Las consultas tendran orden explicito por `id` ascendente. La edicion, el cambio
+Las consultas tienen orden explicito por `id` ascendente. La edicion, el cambio
 de estado y la eliminacion filtraran por ID. Los cambios futuros de esquema
 requeriran incrementar la version y definir una migracion sin borrar tareas.
 
-## Integracion prevista
+## Integracion
 
 - `lib/data/`: esquema, apertura persistente y operaciones asincronas de Drift.
 - `lib/main.dart`: composicion de la aplicacion y propiedad de la conexion.
 - `lib/screens/tareas_page.dart`: presentacion, entradas y mensajes de error.
+- El modelo `Task` generado por Drift reemplaza al modelo inicial `Tarea`, evitando
+  duplicar la representacion de cada registro.
 - Consulta reactiva creada fuera de `build()` y presentada con `StreamBuilder`.
 - Escrituras esperadas con `await`, validacion y errores comprensibles; una
   operacion fallida no se mostrara como exitosa.
 - Cierre de la conexion cuando su propietario deje de necesitarla y liberacion
   de controladores y suscripciones.
 
-No se ejecutaran consultas a la base dentro de `build()`. Una lista en memoria
-podra representar resultados, pero no sera la fuente persistente de las tareas.
+No se ejecutan consultas a la base dentro de `build()`. El stream se crea en
+`initState()`; `StreamBuilder` gestiona su suscripcion. La pantalla distingue
+carga, lista vacia y error de lectura. La escritura evita envios duplicados y
+conserva el texto introducido si falla. La aplicacion cierra la conexion propia
+en `dispose()`; las conexiones inyectadas para pruebas las cierra su propietario.
 
-## Ejecucion inicial
+## Ejecucion
 
 Se requiere Flutter compatible con Dart `^3.13.1`, segun `pubspec.yaml`. Para Linux
 tambien hacen falta las herramientas de compilacion de escritorio y GTK 3.
@@ -114,15 +127,17 @@ flutter pub get
 flutter run -d linux
 ```
 
-Para ejecutar la base inicial en un navegador con Chrome disponible:
+Para ejecutar en un navegador con Chrome disponible:
 
 ```bash
 flutter run -d chrome
 ```
 
 Si solo esta instalado Chromium puede ser necesario establecer
-`CHROME_EXECUTABLE` con su ruta. El comando web no implica que la persistencia ni
-el arranque offline esten configurados en esta etapa.
+`CHROME_EXECUTABLE` con su ruta. La conexion web esta configurada, pero su
+verificacion en navegador y el arranque offline quedan para la cuarta etapa.
+El servidor debe servir `.wasm` como `application/wasm`. Al comprobar persistencia
+web se debe conservar el mismo origen, incluido el puerto.
 
 Comprobaciones del proyecto:
 
@@ -143,17 +158,57 @@ GTK `3.24.52`.
 | `timeout --signal=INT --kill-after=10s 60s flutter run -d linux --no-pub` | Compilacion debug y arranque correctos, sincronizacion con el dispositivo y servicio de depuracion disponibles. Ejecucion limitada a 60 segundos para la comprobacion. |
 
 El arranque emitio una advertencia de GDK sobre el tema del cursor, sin impedir
-la ejecucion. Estas comprobaciones no verifican CRUD ni persistencia porque aun
-no estan implementados. Tampoco se han ejecutado web, Android, iOS, Windows o
-macOS en esta etapa.
+la ejecucion. En esa primera etapa aun no habia CRUD ni persistencia. Tampoco se
+ejecutaron web, Android, iOS, Windows o macOS.
+
+## Resultados de la segunda etapa
+
+Se utilizo el mismo entorno Linux de la primera etapa.
+
+| Comprobacion | Resultado |
+| --- | --- |
+| `flutter analyze --no-pub` | Sin problemas. |
+| `flutter test --no-pub` | 15 pruebas aprobadas: 9 de SQLite sobre archivos reales y 6 de widgets. |
+| Integracion Linux, fase `write` | La interfaz guarda una tarea con ID `1` y estado pendiente; termina el proceso. |
+| Integracion Linux, fase `read` | Un proceso nuevo recupera la tarea desde la misma base y la muestra con el mismo ID, titulo y estado. |
+| Consulta con `sqlite3 -readonly` | Confirma el registro, las restricciones de la tabla y `user_version = 1`. |
+| `flutter build web --no-pub --no-web-resources-cdn` | Compilacion correcta, incluidos WASM y worker locales. No demuestra ejecucion ni persistencia en navegador. |
+
+Las pruebas de datos cubren titulos normalizados, IDs distintos y ordenados,
+estado inicial, rechazo de entradas vacias, restricciones SQLite, emisiones del
+stream y cierre/reapertura del mismo archivo. Las pruebas de widgets cubren
+consulta inicial, alta, validacion, mensajes ante fallos de lectura y escritura,
+y sustitucion de una conexion inyectada sin cerrar conexiones ajenas.
+Solo las pruebas aisladas de widgets usan SQLite en memoria; no se utilizan como
+evidencia de persistencia.
+
+### Reproducir el reinicio real en Linux
+
+Ejecutar desde la raiz del proyecto, en la misma terminal y en este orden:
+
+```bash
+export TASKS_TEST_DATA="$(mktemp -d)"
+XDG_DATA_HOME="$TASKS_TEST_DATA" flutter test integration_test/persistence_test.dart -d linux --no-pub --dart-define=PERSISTENCE_PHASE=write
+XDG_DATA_HOME="$TASKS_TEST_DATA" flutter test integration_test/persistence_test.dart -d linux --no-pub --dart-define=PERSISTENCE_PHASE=read
+sqlite3 -readonly "$TASKS_TEST_DATA/com.example.gestor_tareas_local/tasks.sqlite" 'SELECT id, title, is_completed FROM tasks;'
+```
+
+Cada comando de integracion inicia y termina un proceso nativo independiente con
+la conexion de produccion. `XDG_DATA_HOME` aisla el almacenamiento de prueba para
+no modificar las tareas del usuario. La fase `write` exige una base vacia y la
+fase `read` no inserta nada. Para repetir ambas fases, crear otro directorio con
+`mktemp -d`. Los archivos de prueba quedan en ese directorio temporal, fuera de Git.
+
+En la comprobacion realizada, ambas fases pasaron y la consulta devolvio
+`1|Stage 2 persistence verification|0`. No se utilizaron hot reload ni hot restart.
+La ejecucion y persistencia en navegador, Android, iOS, Windows y macOS siguen
+sin verificar en esta etapa.
 
 ## Etapas siguientes
 
-1. Persistencia real: implementar apertura, alta y consulta; comprobar cierre y
-   reapertura sobre la misma base SQLite, no una base en memoria.
-2. Operaciones restantes: editar titulo, alternar estado y eliminar por ID, con
+1. Operaciones restantes: editar titulo, alternar estado y eliminar por ID, con
    validaciones y mensajes de error.
-3. Compatibilidad y pruebas: configurar recursos web y arranque offline, comprobar
+2. Compatibilidad y pruebas: completar la configuracion web y el arranque offline, comprobar
    Linux y navegador, agregar pruebas automatizadas y registrar resultados reales.
 
 Para comprobar persistencia se esperara la escritura, se terminara completamente

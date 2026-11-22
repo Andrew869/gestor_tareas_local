@@ -1,51 +1,59 @@
 import 'package:flutter/material.dart';
-import '../models/tarea.dart';
 
-// Pantalla base SIN persistencia ni operaciones CRUD implementadas.
-// Conserva las indicaciones TODO para orientar tu trabajo.
+import '../data/app_database.dart';
+
 class TareasPage extends StatefulWidget {
-  const TareasPage({super.key});
+  const TareasPage({super.key, required this.database});
+
+  final AppDatabase database;
 
   @override
   State<TareasPage> createState() => _TareasPageState();
 }
 
 class _TareasPageState extends State<TareasPage> {
-  final TextEditingController _tituloController = TextEditingController();
-
-  final List<Tarea> _tareas = [];
+  final TextEditingController _titleController = TextEditingController();
+  late final Stream<List<Task>> _tasks;
+  bool _saving = false;
+  String? _titleError;
 
   @override
   void initState() {
     super.initState();
-
+    _tasks = widget.database.watchTasks();
   }
 
-  void _agregarTarea() {
-    _pendiente('Implementar registro de tarea');
-  }
+  Future<void> _addTask() async {
+    if (_saving) return;
+    final title = _titleController.text.trim();
+    if (title.isEmpty) {
+      setState(() => _titleError = 'Escribe un título que no esté vacío.');
+      return;
+    }
 
-  void _alternarCompletada(Tarea tarea, bool completada) {
-    _pendiente('Implementar actualización de tarea');
-  }
-
-  void _editarTarea(Tarea tarea) {
-    _pendiente('Implementar edición de título');
-  }
-
-  void _eliminarTarea(Tarea tarea) {
-    _pendiente('Implementar eliminación de tarea');
-  }
-
-  void _pendiente(String mensaje) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(mensaje)),
-    );
+    setState(() {
+      _saving = true;
+      _titleError = null;
+    });
+    try {
+      await widget.database.createTask(title);
+      if (!mounted) return;
+      _titleController.clear();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo guardar la tarea. Inténtalo de nuevo.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
   void dispose() {
-    _tituloController.dispose();
+    _titleController.dispose();
     super.dispose();
   }
 
@@ -59,59 +67,84 @@ class _TareasPageState extends State<TareasPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             TextField(
-              controller: _tituloController,
-              decoration: const InputDecoration(
+              controller: _titleController,
+              enabled: !_saving,
+              onSubmitted: (_) => _addTask(),
+              decoration: InputDecoration(
                 labelText: 'Nueva tarea',
-                border: OutlineInputBorder(),
+                border: const OutlineInputBorder(),
+                errorText: _titleError,
               ),
             ),
             const SizedBox(height: 8),
             FilledButton.icon(
-              onPressed: _agregarTarea,
+              onPressed: _saving ? null : _addTask,
               icon: const Icon(Icons.add),
-              label: const Text('Agregar tarea'),
+              label: Text(_saving ? 'Guardando...' : 'Agregar tarea'),
             ),
             const SizedBox(height: 12),
             const Text('Mis tareas', style: TextStyle(fontSize: 18)),
             const SizedBox(height: 8),
             Expanded(
-              child: _tareas.isEmpty
-                  ? const Center(child: Text('Todavía no hay tareas guardadas'))
-                  : ListView.builder(
-                      itemCount: _tareas.length,
-                      itemBuilder: (context, index) {
-                        final tarea = _tareas[index];
-                        return Card(
-                          child: ListTile(
-                            leading: Checkbox(
-                              value: tarea.completada,
-                              onChanged: (valor) {
-                                if (valor != null) {
-                                  _alternarCompletada(tarea, valor);
-                                }
-                              },
-                            ),
-                            title: Text(tarea.titulo),
-                            subtitle: Text('ID: ${tarea.id}'),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  tooltip: 'Editar',
-                                  icon: const Icon(Icons.edit),
-                                  onPressed: () => _editarTarea(tarea),
-                                ),
-                                IconButton(
-                                  tooltip: 'Eliminar',
-                                  icon: const Icon(Icons.delete_outline),
-                                  onPressed: () => _eliminarTarea(tarea),
-                                ),
-                              ],
-                            ),
+              child: StreamBuilder<List<Task>>(
+                stream: _tasks,
+                builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    return const Center(
+                      child: Text(
+                        'No se pudieron leer las tareas. Comprueba que el '
+                        'almacenamiento esté disponible y vuelve a abrir '
+                        'la aplicación.',
+                        textAlign: TextAlign.center,
+                      ),
+                    );
+                  }
+                  if (!snapshot.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final tasks = snapshot.requireData;
+                  if (tasks.isEmpty) {
+                    return const Center(
+                      child: Text('Todavía no hay tareas guardadas'),
+                    );
+                  }
+                  return ListView.builder(
+                    itemCount: tasks.length,
+                    itemBuilder: (context, index) {
+                      final task = tasks[index];
+                      return Card(
+                        key: ValueKey(task.id),
+                        child: ListTile(
+                          leading: Checkbox(
+                            value: task.isCompleted,
+                            onChanged: null,
                           ),
-                        );
-                      },
-                    ),
+                          title: Text(task.title),
+                          subtitle: Text(
+                            'ID: ${task.id} · '
+                            '${task.isCompleted ? 'Completada' : 'Pendiente'}',
+                          ),
+                          trailing: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip: 'Editar (próxima etapa)',
+                                icon: Icon(Icons.edit),
+                                onPressed: null,
+                              ),
+                              IconButton(
+                                tooltip: 'Eliminar (próxima etapa)',
+                                icon: Icon(Icons.delete_outline),
+                                onPressed: null,
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
             ),
           ],
         ),
