@@ -60,6 +60,27 @@ class AppDatabase extends _$AppDatabase {
 
   Future<List<Task>> getTasks() => _orderedTasks().get();
 
+  Future<int> updateTaskTitle(int id, String input) {
+    final title = input.trim();
+    if (title.isEmpty) {
+      throw ArgumentError('Task title must not be empty.');
+    }
+
+    return (update(tasks)..where((task) => task.id.equals(id))).write(
+      TasksCompanion(title: Value(title)),
+    );
+  }
+
+  Future<int> setTaskCompleted(int id, bool completed) {
+    return (update(tasks)..where((task) => task.id.equals(id))).write(
+      TasksCompanion(isCompleted: Value(completed)),
+    );
+  }
+
+  Future<int> deleteTask(int id) {
+    return (delete(tasks)..where((task) => task.id.equals(id))).go();
+  }
+
   Stream<List<Task>> watchTasks() => _orderedTasks().watch();
 
   SimpleSelectStatement<Tasks, Task> _orderedTasks() {

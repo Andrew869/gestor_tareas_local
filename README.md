@@ -4,13 +4,15 @@ Proyecto Flutter para administrar tareas mediante SQLite local, sin servidor de
 datos, MySQL ni API HTTP. El objetivo es compartir el mismo proyecto entre Android,
 iOS, Windows, Linux, macOS y web, conservando las tareas entre ejecuciones.
 
-## Estado actual: segunda etapa
+## Estado actual: tercera etapa
 
 La aplicacion abre una base SQLite persistente, valida y guarda tareas nuevas,
 y muestra su titulo, ID y estado mediante una consulta reactiva. La lista se
 recupera de SQLite al volver a abrir la aplicacion; no depende de una lista local.
-Los controles de edicion, estado y eliminacion estan deshabilitados hasta la
-tercera etapa. La primera etapa verifico el proyecto inicial y definio el diseno.
+Tambien permite editar titulos, alternar entre pendiente y completada y eliminar
+por ID con confirmacion. Estas operaciones se guardan en SQLite y sobreviven al
+reinicio. La primera etapa verifico el proyecto inicial y definio el diseno; la
+segunda incorporo la apertura persistente, el alta y la consulta.
 
 ## Tecnologia elegida
 
@@ -89,13 +91,12 @@ el titulo ni la cantidad de registros. `AUTOINCREMENT` evita reutilizar IDs de
 registros eliminados, pero no garantiza una secuencia sin huecos. Se permiten
 titulos repetidos: representan tareas distintas por su ID.
 
-Antes de insertar se aplica `String.trim()` en Dart y se rechaza un resultado
+Antes de insertar o editar se aplica `String.trim()` en Dart y se rechaza un resultado
 vacio, tanto en la pantalla como en la capa de datos. Esto tambien cubre espacios
 que el `trim()` de SQLite no elimina por defecto. El titulo se guarda normalizado.
-La edicion incorporara la misma validacion en la tercera etapa.
 
 Las consultas tienen orden explicito por `id` ascendente. La edicion, el cambio
-de estado y la eliminacion filtraran por ID. Los cambios futuros de esquema
+de estado y la eliminacion filtran por ID. Los cambios futuros de esquema
 requeriran incrementar la version y definir una migracion sin borrar tareas.
 
 ## Integracion
@@ -116,6 +117,26 @@ No se ejecutan consultas a la base dentro de `build()`. El stream se crea en
 carga, lista vacia y error de lectura. La escritura evita envios duplicados y
 conserva el texto introducido si falla. La aplicacion cierra la conexion propia
 en `dispose()`; las conexiones inyectadas para pruebas las cierra su propietario.
+
+### Operaciones por ID
+
+- `updateTaskTitle(id, input)`: normaliza y valida el titulo; solo actualiza ese
+  campo, conservando el ID y el estado.
+- `setTaskCompleted(id, completed)`: guarda el estado solicitado sin modificar
+  el titulo ni otros registros.
+- `deleteTask(id)`: borra exclusivamente la tarea con ese identificador.
+
+Estas operaciones devuelven la cantidad de filas afectadas. Si es `0`, la interfaz
+informa que la tarea ya no existe, en lugar de afirmar que se modifico o elimino.
+No se cambia la lista de forma optimista: el stream refleja los resultados de
+SQLite. Los titulos duplicados no afectan la seleccion del registro.
+
+El dialogo de edicion permite cancelar sin guardar y mantiene el texto si falla
+la escritura. Mientras guarda, bloquea nuevos envios y la salida del dialogo.
+La eliminacion requiere confirmacion. Las acciones de una tarea se deshabilitan
+mientras haya una operacion o un dialogo pendiente para ese ID, sin bloquear
+innecesariamente las demas tareas. Se muestran errores especificos de edicion,
+estado y eliminacion; una operacion fallida no se presenta como exitosa.
 
 ## Ejecucion
 
@@ -204,12 +225,53 @@ En la comprobacion realizada, ambas fases pasaron y la consulta devolvio
 La ejecucion y persistencia en navegador, Android, iOS, Windows y macOS siguen
 sin verificar en esta etapa.
 
-## Etapas siguientes
+## Resultados de la tercera etapa
 
-1. Operaciones restantes: editar titulo, alternar estado y eliminar por ID, con
-   validaciones y mensajes de error.
-2. Compatibilidad y pruebas: completar la configuracion web y el arranque offline, comprobar
-   Linux y navegador, agregar pruebas automatizadas y registrar resultados reales.
+Se conserva `schemaVersion = 1`: no cambiaron las tablas ni sus restricciones,
+por lo que no se necesita una migracion y las tareas de la etapa 2 se mantienen.
+
+| Comprobacion | Resultado |
+| --- | --- |
+| `flutter analyze --no-pub` | Sin problemas. |
+| `flutter test --no-pub` | 28 pruebas aprobadas: 13 de SQLite en archivos reales y 15 de widgets. |
+| Integracion Linux, fase `modify` | Abre la base creada en la etapa 2, edita la tarea ID `1`, la marca completada y crea y elimina otra tarea ID `2`, usando la interfaz. |
+| Integracion Linux, fase `verify` | Otro proceso recupera solo la tarea ID `1`, con titulo editado y estado completado; la tarea ID `2` no reaparece. |
+| Consulta con `sqlite3 -readonly` | Devuelve `1\|Stage 3 edited task\|1`, confirma cero filas para ID `2` y `user_version = 1`. |
+| `flutter build web --no-pub --no-web-resources-cdn` | Compilacion correcta. La ejecucion real en navegador sigue pendiente de la etapa 4. |
+
+Las pruebas de datos verifican edicion normalizada, rechazo de titulos vacios,
+cambio de estado en ambos sentidos, borrado por ID entre titulos duplicados,
+IDs inexistentes, proteccion de las otras tareas y notificaciones reactivas de
+las tres operaciones. Tras cerrar y reabrir el archivo se comprueba que persisten
+el titulo, el estado y el borrado, y que no se reutiliza el ID eliminado.
+
+Las pruebas de interfaz agregadas cubren edicion y cancelacion, validacion,
+checkbox, confirmacion y cancelacion del borrado, tarea inexistente y fallos de
+almacenamiento en las tres operaciones. Ante un fallo de edicion se conserva el
+texto; ante un fallo de estado o borrado se mantiene la representacion anterior.
+
+### Reproducir las operaciones y el reinicio en Linux
+
+Despues de las fases `write` y `read` descritas arriba, ejecutar en la misma
+terminal y con el mismo `TASKS_TEST_DATA`:
+
+```bash
+XDG_DATA_HOME="$TASKS_TEST_DATA" flutter test integration_test/persistence_test.dart -d linux --no-pub --dart-define=PERSISTENCE_PHASE=modify
+XDG_DATA_HOME="$TASKS_TEST_DATA" flutter test integration_test/persistence_test.dart -d linux --no-pub --dart-define=PERSISTENCE_PHASE=verify
+sqlite3 -readonly "$TASKS_TEST_DATA/com.example.gestor_tareas_local/tasks.sqlite" 'SELECT id, title, is_completed FROM tasks; SELECT count(*) FROM tasks WHERE id = 2; PRAGMA user_version;'
+```
+
+Las fases `modify` y `verify` tambien se ejecutan en procesos independientes. La
+segunda solo consulta, sin insertar ni editar registros. Para repetir el ciclo
+completo se debe crear un directorio de prueba nuevo y ejecutar las cuatro fases
+en orden: `write`, `read`, `modify`, `verify`.
+
+## Etapa siguiente
+
+Compatibilidad y pruebas: completar la configuracion web y el arranque offline,
+verificar el CRUD y la persistencia en navegador, ampliar las comprobaciones
+multiplataforma y documentar los resultados reales. No se declara verificacion
+en Android, iOS, Windows o macOS sin ejecutarlos.
 
 Para comprobar persistencia se esperara la escritura, se terminara completamente
 la aplicacion y se abrira de nuevo. Hot reload no basta: conserva estado en

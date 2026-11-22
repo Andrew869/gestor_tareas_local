@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:drift/native.dart';
@@ -58,8 +59,73 @@ void main() {
     });
   }
 
+  test('normalizes edits while preserving IDs, state and other tasks', () {
+    return withDatabase((database) async {
+      final id = await database.createTask('Original title');
+      await database.setTaskCompleted(id, true);
+      await database.createTask('Other task');
+      final originalTasks = await database.getTasks();
+
+      expect(await database.updateTaskTitle(id, '\t Edited  title \n'), 1);
+      final tasks = await database.getTasks();
+      expect(tasks, [
+        originalTasks.first.copyWith(title: 'Edited  title'),
+        originalTasks.last,
+      ]);
+
+      for (final title in ['', '   ', '\t\n']) {
+        expect(() => database.updateTaskTitle(id, title), throwsArgumentError);
+        expect(await database.getTasks(), tasks);
+      }
+    });
+  });
+
+  test('toggles completion without changing titles or another task', () {
+    return withDatabase((database) async {
+      final id = await database.createTask('Task to toggle');
+      await database.createTask('Other task');
+      final originalTasks = await database.getTasks();
+
+      for (final completed in [true, false]) {
+        expect(await database.setTaskCompleted(id, completed), 1);
+        expect(await database.getTasks(), [
+          originalTasks.first.copyWith(isCompleted: completed),
+          originalTasks.last,
+        ]);
+      }
+    });
+  });
+
+  test('deletes only the requested ID among duplicate titles', () {
+    return withDatabase((database) async {
+      await database.createTask('Duplicate title');
+      final id = await database.createTask('Duplicate title');
+      final originalTasks = await database.getTasks();
+
+      expect(await database.deleteTask(id), 1);
+      expect(await database.getTasks(), [originalTasks.first]);
+    });
+  });
+
+  test('missing IDs return zero without modifying existing tasks', () {
+    return withDatabase((database) async {
+      final id = await database.createTask('First task');
+      final lastId = await database.createTask('Second task');
+      await database.setTaskCompleted(id, true);
+      final originalTasks = await database.getTasks();
+      final missingId = lastId + 1;
+
+      expect(await database.updateTaskTitle(missingId, 'Changed title'), 0);
+      expect(await database.getTasks(), originalTasks);
+      expect(await database.setTaskCompleted(missingId, true), 0);
+      expect(await database.getTasks(), originalTasks);
+      expect(await database.deleteTask(missingId), 0);
+      expect(await database.getTasks(), originalTasks);
+    });
+  });
+
   test(
-    'preserves IDs, titles and state after reopening the same file',
+    'persists edits, completion and deletion without reusing the deleted ID',
     () async {
       final directory = await Directory.systemTemp.createTemp(
         'app_database_test_',
@@ -67,12 +133,18 @@ void main() {
       try {
         final file = File('${directory.path}/tasks.sqlite');
         late List<Task> originalTasks;
+        late int deletedId;
         final database = AppDatabase.forTesting(NativeDatabase(file));
         try {
-          await database.createTask('  First task  ');
-          await database.createTask('\tSecond task\n');
+          final id = await database.createTask('  First task  ');
+          deletedId = await database.createTask('\tSecond task\n');
+          expect(await database.updateTaskTitle(id, '  Edited task  '), 1);
+          expect(await database.setTaskCompleted(id, true), 1);
+          expect(await database.deleteTask(deletedId), 1);
           originalTasks = await database.getTasks();
-          expect(originalTasks, hasLength(2));
+          expect(originalTasks, [
+            Task(id: id, title: 'Edited task', isCompleted: true),
+          ]);
         } finally {
           await database.close();
         }
@@ -81,6 +153,12 @@ void main() {
         final reopenedDatabase = AppDatabase.forTesting(NativeDatabase(file));
         try {
           expect(await reopenedDatabase.getTasks(), originalTasks);
+          final newId = await reopenedDatabase.createTask('New task');
+          expect(newId, greaterThan(deletedId));
+          expect(await reopenedDatabase.getTasks(), [
+            ...originalTasks,
+            Task(id: newId, title: 'New task', isCompleted: false),
+          ]);
         } finally {
           await reopenedDatabase.close();
         }
@@ -90,23 +168,50 @@ void main() {
     },
   );
 
-  test('watchTasks emits the inserted task after subscribing', () {
+  test('watchTasks emits insertion, edits, completion and deletion', () {
     return withDatabase((database) async {
-      await expectLater(database.watchTasks(), emits(isEmpty));
+      final subscription = StreamIterator(database.watchTasks());
+      try {
+        expect(await subscription.moveNext(), isTrue);
+        expect(subscription.current, isEmpty);
 
-      final update = expectLater(
-        database.watchTasks(),
-        emitsThrough(
-          isA<List<Task>>()
-              .having((tasks) => tasks.length, 'length', 1)
-              .having((tasks) => tasks.single.id, 'ID', greaterThan(0))
-              .having((tasks) => tasks.single.title, 'title', 'Stream task')
-              .having((tasks) => tasks.single.isCompleted, 'state', isFalse),
-        ),
-      );
+        final insertion = expectLater(
+          subscription.moveNext(),
+          completion(isTrue),
+        );
+        final id = await database.createTask('  Stream task  ');
+        await insertion;
+        expect(subscription.current, [
+          Task(id: id, title: 'Stream task', isCompleted: false),
+        ]);
 
-      await database.createTask('  Stream task  ');
-      await update;
+        final edit = expectLater(subscription.moveNext(), completion(isTrue));
+        await database.updateTaskTitle(id, '  Edited stream task  ');
+        await edit;
+        expect(subscription.current, [
+          Task(id: id, title: 'Edited stream task', isCompleted: false),
+        ]);
+
+        final completionUpdate = expectLater(
+          subscription.moveNext(),
+          completion(isTrue),
+        );
+        await database.setTaskCompleted(id, true);
+        await completionUpdate;
+        expect(subscription.current, [
+          Task(id: id, title: 'Edited stream task', isCompleted: true),
+        ]);
+
+        final deletion = expectLater(
+          subscription.moveNext(),
+          completion(isTrue),
+        );
+        await database.deleteTask(id);
+        await deletion;
+        expect(subscription.current, isEmpty);
+      } finally {
+        await subscription.cancel();
+      }
     });
   });
 
