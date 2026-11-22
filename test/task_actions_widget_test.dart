@@ -129,6 +129,90 @@ void main() {
     });
   });
 
+  testWidgets('Long tasks remain usable at 320x640 with the keyboard visible', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 640);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetViewInsets);
+
+    const longTitle =
+        'Review the mobile task list with a very long title that wraps across '
+        'many lines while keeping the checkbox, edit and delete actions usable '
+        'on a narrow screen';
+    const updatedTitle = '$longTitle after editing';
+    await database.updateTaskTitle(1, longTitle);
+    await database.updateTaskTitle(2, longTitle);
+
+    await withApp(tester, () async {
+      expect(tester.takeException(), isNull);
+      expect(find.text(longTitle), findsWidgets);
+      final checkbox = taskAction(1, find.byType(Checkbox));
+      await tester.ensureVisible(checkbox);
+      await tester.pumpAndSettle();
+      expect(checkbox.hitTestable(), findsOneWidget);
+      await tester.tap(checkbox);
+      await tester.pumpAndSettle();
+      expect((await database.getTasks()).first.isCompleted, isTrue);
+
+      final list = find.descendant(
+        of: find.byType(ListView),
+        matching: find.byType(Scrollable),
+      );
+      final secondEdit = taskAction(2, find.byTooltip('Editar'));
+      await tester.scrollUntilVisible(secondEdit, 150, scrollable: list);
+      await tester.pumpAndSettle();
+      expect(secondEdit.hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      final edit = taskAction(1, find.byTooltip('Editar'));
+      await tester.scrollUntilVisible(edit, -150, scrollable: list);
+      await tester.pumpAndSettle();
+      await tester.tap(edit);
+      await tester.pumpAndSettle();
+      tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      final field = find.byType(TextFormField);
+      expect(field.hitTestable(), findsOneWidget);
+      await tester.enterText(field, updatedTitle);
+      final save = find.widgetWithText(FilledButton, 'Guardar');
+      expect(save.hitTestable(), findsOneWidget);
+      expect(tester.getRect(save).bottom, lessThanOrEqualTo(360));
+      expect(find.text('Cancelar').hitTestable(), findsOneWidget);
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect((await database.getTasks()).first.title, updatedTitle);
+      expect(tester.takeException(), isNull);
+
+      final delete = taskAction(1, find.byTooltip('Eliminar'));
+      await tester.ensureVisible(delete);
+      await tester.pumpAndSettle();
+      expect(delete.hitTestable(), findsOneWidget);
+      await tester.tap(delete);
+      await tester.pumpAndSettle();
+      expect(find.text('¿Quieres eliminar "$updatedTitle"?'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      final confirm = find.widgetWithText(FilledButton, 'Eliminar');
+      expect(confirm.hitTestable(), findsOneWidget);
+      expect(tester.getRect(confirm).bottom, lessThanOrEqualTo(360));
+      expect(find.text('Cancelar').hitTestable(), findsOneWidget);
+      await tester.tap(confirm);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byKey(const ValueKey(1)), findsNothing);
+      final remaining = (await database.getTasks()).single;
+      expect(remaining.id, 2);
+      expect(remaining.title, longTitle);
+      expect(remaining.isCompleted, isFalse);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   testWidgets('Edit failures preserve entered text and allow cancellation', (
     tester,
   ) async {

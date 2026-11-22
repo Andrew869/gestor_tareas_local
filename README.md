@@ -4,7 +4,7 @@ Proyecto Flutter para administrar tareas mediante SQLite local, sin servidor de
 datos, MySQL ni API HTTP. El objetivo es compartir el mismo proyecto entre Android,
 iOS, Windows, Linux, macOS y web, conservando las tareas entre ejecuciones.
 
-## Estado actual: tercera etapa
+## Estado actual: cuarta etapa
 
 La aplicacion abre una base SQLite persistente, valida y guarda tareas nuevas,
 y muestra su titulo, ID y estado mediante una consulta reactiva. La lista se
@@ -13,6 +13,9 @@ Tambien permite editar titulos, alternar entre pendiente y completada y eliminar
 por ID con confirmacion. Estas operaciones se guardan en SQLite y sobreviven al
 reinicio. La primera etapa verifico el proyecto inicial y definio el diseno; la
 segunda incorporo la apertura persistente, el alta y la consulta.
+La cuarta etapa verifica Linux y Chromium y agrega el empaquetado web para
+reapertura y operaciones sin red. Las demas plataformas estan contempladas por
+la conexion multiplataforma, pero no se declaran probadas en este equipo.
 
 ## Tecnologia elegida
 
@@ -61,9 +64,9 @@ en memoria o una implementacion sin coordinacion segura entre pestanas se
 rechazan con un error de almacenamiento.
 
 La carga inicial web requiere servir los archivos de la aplicacion; esto no
-equivale a utilizar un servidor de datos. La etapa de compatibilidad configurara
-y verificara una cache offline para Flutter, WASM y worker, de modo que se pueda
-reabrir sin red. Las operaciones CRUD no utilizaran solicitudes HTTP.
+equivale a utilizar un servidor de datos. El empaquetado web incluye una cache
+offline para Flutter, fuentes, WASM y worker, verificada para reabrir sin red.
+Las operaciones CRUD no utilizan solicitudes HTTP.
 
 ## Esquema de tareas
 
@@ -148,17 +151,33 @@ flutter pub get
 flutter run -d linux
 ```
 
-Para ejecutar en un navegador con Chrome disponible:
+Para desarrollo web con Chrome disponible, en un puerto distinto al bundle release:
 
 ```bash
-flutter run -d chrome
+flutter run -d chrome --web-port=8081
 ```
 
 Si solo esta instalado Chromium puede ser necesario establecer
-`CHROME_EXECUTABLE` con su ruta. La conexion web esta configurada, pero su
-verificacion en navegador y el arranque offline quedan para la cuarta etapa.
+`CHROME_EXECUTABLE` con su ruta. Este comando de desarrollo no habilita la cache
+offline. Para generar y ejecutar la distribucion web sin dependencias de CDN:
+
+```bash
+npm ci --ignore-scripts
+npm run build:web
+npm run serve:web
+```
+
+Requiere Node.js 22 o superior para estas herramientas. Abrir
+`http://127.0.0.1:8080/` y esperar **Disponible sin conexion**. Despues se puede
+cerrar el navegador y detener el servidor: la misma URL se reabre con el mismo
+perfil sin red. El servidor solo entrega archivos estaticos, nunca tareas.
+Los detalles de despliegue HTTPS, cabeceras, actualizaciones y subrutas estan en
+[`web/README.md`](web/README.md).
+
 El servidor debe servir `.wasm` como `application/wasm`. Al comprobar persistencia
-web se debe conservar el mismo origen, incluido el puerto.
+web se debe conservar el mismo origen, incluido el puerto. Borrar los datos del
+sitio o cerrar una sesion privada puede eliminar la base y la cache. La persistencia
+local no es una copia de seguridad.
 
 Comprobaciones del proyecto:
 
@@ -266,12 +285,62 @@ segunda solo consulta, sin insertar ni editar registros. Para repetir el ciclo
 completo se debe crear un directorio de prueba nuevo y ejecutar las cuatro fases
 en orden: `write`, `read`, `modify`, `verify`.
 
-## Etapa siguiente
+## Resultados de la cuarta etapa
 
-Compatibilidad y pruebas: completar la configuracion web y el arranque offline,
-verificar el CRUD y la persistencia en navegador, ampliar las comprobaciones
-multiplataforma y documentar los resultados reales. No se declara verificacion
-en Android, iOS, Windows o macOS sin ejecutarlos.
+Entorno nativo: Arch Linux, Flutter `3.47.1`, Dart `3.13.1` y sesion Wayland.
+Entorno web: Chromium `156.0.8078.79`, Node.js `26.13.0` y Playwright Core `1.65.1`.
+
+| Comprobacion | Resultado |
+| --- | --- |
+| `flutter analyze --no-pub` | Sin problemas. |
+| `flutter test --no-pub` | 29 pruebas aprobadas: 13 de SQLite en archivos reales y 16 de widgets. |
+| Integracion Linux | Pasan `write`, `read`, `modify` y `verify` en cuatro procesos independientes y almacenamiento aislado. |
+| `flutter build linux --release --no-pub` | Compilacion release correcta; se ejecuta el bundle nativo sobre la misma base de prueba. |
+| `npm run build:web` | Bundle release con recursos locales y precache versionada, sin CDN. |
+| Pruebas de navegador | Pasan CRUD y dos reaperturas completas, incluyendo cambios offline con el servidor detenido, en OPFS e IndexedDB. |
+| Pruebas de actualizacion web | La version nueva espera al cierre de las pestanas, elimina la cache vieja y conserva la tarea; luego reabre offline. |
+| Pruebas del service worker | Cuatro pruebas de instalacion fallida, limpieza por scope, lectura desde cache y exclusion de peticiones ajenas. |
+| Publicacion en subruta | Tambien se verifica el bundle en `/tasks/`, con rutas relativas y cache del scope correctas. |
+| Pantalla movil simulada | A 320x640, con titulos largos y teclado visible: sin overflow, con edicion, cambio de estado y eliminacion accesibles. No equivale a ejecutar Android o iOS. |
+
+El ciclo web usa perfiles temporales de Chromium, sin datos previos. La primera
+sesion guarda, edita, completa y elimina tareas. Despues se cierran navegador y
+servidor, se reabre con la red deshabilitada y se comprueban los registros. En esa
+sesion se crea, edita, pasa a pendiente y elimina sin red; otra reapertura offline
+verifica el resultado. Se confirma la base `tasks` en OPFS o IndexedDB, se detectan
+errores JavaScript y se exige que no haya solicitudes externas ni peticiones al
+servidor durante el CRUD. Las mismas pruebas se ejecutan con y sin COOP/COEP.
+
+Para repetir las siete pruebas web (cuatro unitarias y tres de navegador):
+
+```bash
+npm ci --ignore-scripts
+npm run build:web
+CHROME_EXECUTABLE=/usr/bin/chromium npm run test:web
+```
+
+Para repetir el ciclo nativo completo, crear otro `TASKS_TEST_DATA` y ejecutar
+las cuatro fases descritas arriba en orden. El arranque release se comprobo con
+un limite de 12 segundos; persiste la advertencia no bloqueante del cursor de GDK
+ya observada en la primera etapa.
+
+### Matriz de compatibilidad
+
+| Plataforma | Diseno de persistencia | Verificacion realizada |
+| --- | --- | --- |
+| Android | SQLite nativo en soporte privado de la aplicacion. | No ejecutado; no hay dispositivo conectado y el SDK local tiene licencias pendientes de verificar. |
+| iOS | SQLite nativo en el sandbox. | No ejecutado; requiere macOS y Xcode. |
+| Windows | SQLite nativo en soporte de la aplicacion. | No ejecutado; requiere entorno Windows. |
+| Linux | SQLite nativo en soporte de la aplicacion. | CRUD, reinicios independientes y build/arranque release verificados. |
+| macOS | SQLite nativo en soporte de la aplicacion. | No ejecutado; requiere macOS y Xcode. |
+| Web | SQLite WASM en OPFS o IndexedDB. | Chromium: CRUD, persistencia y reapertura offline, raiz y subruta; con y sin aislamiento. |
+
+Firefox, Safari, navegadores moviles y el modo privado no se han ejecutado. La
+compatibilidad de Drift no sustituye pruebas en esos entornos. El navegador puede
+restringir o desalojar almacenamiento; si Drift solo ofrece memoria o IndexedDB
+sin coordinacion segura, la aplicacion informa un error en vez de prometer
+persistencia. Los glifos no incluidos en las fuentes locales pueden no mostrarse,
+aunque SQLite conserva el titulo Unicode completo.
 
 Para comprobar persistencia se esperara la escritura, se terminara completamente
 la aplicacion y se abrira de nuevo. Hot reload no basta: conserva estado en
