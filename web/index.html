@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
   <!--
     If you are serving your web app in a path other than the root, change the
@@ -18,21 +18,37 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="Tareas guardadas en SQLite local, sin servidor de datos.">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="gestor_tareas_local">
+  <meta name="apple-mobile-web-app-title" content="Tareas locales">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>gestor_tareas_local</title>
+  <title>Gestor de tareas</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    #offline-status {
+      position: fixed;
+      bottom: 8px;
+      right: 12px;
+      max-width: calc(100% - 24px);
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: #eef0ff;
+      color: #303f75;
+      font: 12px sans-serif;
+      pointer-events: none;
+      z-index: 10;
+    }
+  </style>
 </head>
 <body>
+  <div id="offline-status" role="status" hidden></div>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader

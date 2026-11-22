@@ -1,0 +1,16 @@
+{
+  "name": "gestor-tareas-local-web-tools",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build:web": "node tool/build_web.mjs",
+    "serve:web": "node tool/serve_web.mjs",
+    "test:web": "node --test --test-concurrency=1 tool/*_test.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.65.1"
+  }
+}
